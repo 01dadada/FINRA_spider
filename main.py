@@ -127,6 +127,9 @@ def main():
             df = pd.DataFrame(all_data)
             df.to_csv(f"{dataset}.csv", sep="|", index=False, encoding="utf-8")
             print(f"--- 文件保存成功: {dataset}.csv ---")
+    df = pd.DataFrame(all_data)
+    df.to_csv(f"{dataset}.csv", sep="|", index=False, encoding="utf-8")
+    print(f"--- 文件保存成功: {dataset}.csv ---")
 
 
 if __name__ == "__main__":
