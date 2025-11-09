@@ -18,19 +18,18 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "10"))
 TOKEN_REFRESH_INTERVAL = int(os.getenv("TOKEN_REFRESH_INTERVAL", "300"))
 USERNAME = os.getenv("USERNAME")
 PASSWORD = os.getenv("PASSWORD")
-SAVE_INTERVEL = int(os.getenv("SAVE_INTERVEL", "100"))
 DATASET = os.getenv("DATASET", "monthlySummary")
+DEFAULT_SAVE_FOLDER = os.getenv("SAVE_FOLDER", "data_output")
 
 
 def main():
     all_data = []
+    file_counter = 1
+    REQUEST_SAVE_INTERVAL = 200  # 每200次保存一个独立文件
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", required=True, help="要获取的数据集名称", default="monthlySummary")
-    parser.add_argument("--save_intervel", required=False, help="保存间隔", default=SAVE_INTERVEL)
-
     parser.add_argument("--limit", required=False, help="每次请求的数据量限制", default=LIMIT)
-
     parser.add_argument(
         "--retry_delay_seconds", required=False, help="速率限制后的重试等待时间", default=RETRY_DELAY_SECONDS
     )
@@ -40,16 +39,24 @@ def main():
     )
     parser.add_argument("--username", required=False, help="用户名", default=USERNAME)
     parser.add_argument("--password", required=False, help="密码", default=PASSWORD)
+    parser.add_argument("--file_name", required=False, help="保存文件名称（无后缀）", default=DATASET)
+    parser.add_argument("--offset", required=False, help="起始位置", default=0)
+    parser.add_argument("--save_folder", required=True, help="保存目标文件夹", default=DEFAULT_SAVE_FOLDER)
     args = parser.parse_args()
 
     dataset = args.dataset
-    save_intervel = args.save_intervel
-    limit = args.limit
-    retry_delay_seconds = args.retry_delay_seconds
-    max_retries = args.max_retries
-    token_refresh_interval = args.token_refresh_interval
+    limit = int(args.limit)
+    retry_delay_seconds = int(args.retry_delay_seconds)
+    max_retries = int(args.max_retries)
+    token_refresh_interval = int(args.token_refresh_interval)
     username = args.username
     password = args.password
+    file_base_name = args.file_name
+    offset = int(args.offset)
+    save_folder = args.save_folder
+
+    # 确保目标文件夹存在
+    os.makedirs(save_folder, exist_ok=True)
 
     def get_access_token():
         TOKEN_PAYLOAD = {
@@ -79,13 +86,13 @@ def main():
                 print(f"--- ⚠️ 网络错误，尝试第 {attempt + 1}/{max_retries} 次重试：{e} ---")
                 time.sleep(retry_delay_seconds)
 
-    offset = 0
+        raise RuntimeError("无法获取Access Token")
+
     url = f"{BASE_URL}{dataset}"
-    c = 0
+    request_counter = 0
     current_access_token, token_acquisition_time = get_access_token()
 
     while True:
-        c = c + 1
         if time.time() - token_acquisition_time > token_refresh_interval:
             try:
                 current_access_token, token_acquisition_time = get_access_token()
@@ -106,30 +113,44 @@ def main():
             all_data.extend(data)
             print(f"  ✅ 成功获取 {count} 条记录。总计: {len(all_data)}")
             # 如果返回的记录数少于 limit，说明已是最后一页
-            if count < limit:
-                print(f"--- 🎉 {dataset} 数据获取完成，总共 {len(all_data)} 条记录 ---")
-                break
             offset += limit
+            request_counter += 1
+
+            if request_counter % REQUEST_SAVE_INTERVAL == 0:
+                df = pd.DataFrame(all_data)
+                filename = os.path.join(save_folder, f"{file_base_name}_part{file_counter}.csv")
+                df.to_csv(filename, sep="|", index=False, encoding="utf-8")
+                print(f"--- 文件保存成功: {filename} ---")
+                all_data = []
+                file_counter += 1
+
+            if count < limit:
+                print(f"--- 🎉 {dataset} 数据获取完成，最后一批数据即将保存，总共请求次数: {request_counter} ---")
+                break
         except RequestException as e:
             print(f"--- ❌ 数据请求发生错误：{e} ---")
-            print("--- ⚠️ 尝试等待 30 秒后重试... ---")
-            df = pd.DataFrame(all_data)
-            df.to_csv(f"{dataset}.csv", sep="|", index=False, encoding="utf-8")
-            print(f"--- 文件保存成功: {dataset}.csv ---")
+            print(f"--- ⚠️ 尝试等待 {retry_delay_seconds} 秒后重试... ---")
+            # 保存临时数据为新分片
+            if all_data:
+                df = pd.DataFrame(all_data)
+                filename = os.path.join(save_folder, f"{file_base_name}_part{file_counter}.csv")
+                df.to_csv(filename, sep="|", index=False, encoding="utf-8")
+                print(f"--- 临时数据已保存: {filename} ---")
             time.sleep(retry_delay_seconds)
         except Exception as e:
             print(f"--- ❌ 发生意外错误：{e} ---")
-            df = pd.DataFrame(all_data)
-            df.to_csv(f"{dataset}.csv", sep="|", index=False, encoding="utf-8")
-            print(f"--- 文件保存成功: {dataset}.csv ---")
+            if all_data:
+                df = pd.DataFrame(all_data)
+                filename = os.path.join(save_folder, f"{file_base_name}_part{file_counter}.csv")
+                df.to_csv(filename, sep="|", index=False, encoding="utf-8")
+                print(f"--- 临时数据已保存: {filename} ---")
             raise e
-        if c % SAVE_INTERVEL == 0:
-            df = pd.DataFrame(all_data)
-            df.to_csv(f"{dataset}.csv", sep="|", index=False, encoding="utf-8")
-            print(f"--- 文件保存成功: {dataset}.csv ---")
-    df = pd.DataFrame(all_data)
-    df.to_csv(f"{dataset}.csv", sep="|", index=False, encoding="utf-8")
-    print(f"--- 文件保存成功: {dataset}.csv ---")
+    # 检查是否有剩余未保存的数据
+    if all_data:
+        df = pd.DataFrame(all_data)
+        filename = os.path.join(save_folder, f"{file_base_name}_part{file_counter}.csv")
+        df.to_csv(filename, sep="|", index=False, encoding="utf-8")
+        print(f"--- 文件保存成功: {filename} ---")
 
 
 if __name__ == "__main__":
