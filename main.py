@@ -39,7 +39,6 @@ def main():
     )
     parser.add_argument("--username", required=False, help="用户名", default=USERNAME)
     parser.add_argument("--password", required=False, help="密码", default=PASSWORD)
-    parser.add_argument("--file_name", required=False, help="保存文件名称（无后缀）", default=DATASET)
     parser.add_argument("--offset", required=False, help="起始位置", default=0)
     parser.add_argument("--save_folder", required=True, help="保存目标文件夹", default=DEFAULT_SAVE_FOLDER)
     args = parser.parse_args()
@@ -51,7 +50,7 @@ def main():
     token_refresh_interval = int(args.token_refresh_interval)
     username = args.username
     password = args.password
-    file_base_name = args.file_name
+    file_base_name = dataset
     offset = int(args.offset)
     save_folder = args.save_folder
 
